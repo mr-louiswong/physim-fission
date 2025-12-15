@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Massive Scale Nuclear Fission</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        canvas {
+            touch-action: none;
+            user-select: none;
+            cursor: grab;
+            /* Subtle grid pattern background */
+            background-color: #f8fafc;
+            background-image: radial-gradient(#cbd5e1 1px, transparent 1px);
+            background-size: 20px 20px;
+        }
+        canvas:active {
+            cursor: grabbing;
+        }
+        .monitor-panel {
+            background: rgba(255, 255, 255, 0.95);
+            border: 1px solid #e5e7eb;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+    </style>
+</head>
+<body class="bg-slate-100 text-slate-800 font-sans h-screen flex flex-col overflow-hidden">
+
+    <header class="bg-blue-900 text-white p-3 shadow-md flex justify-between items-center z-10 shrink-0">
+        <div class="flex items-center gap-3">
+            <h1 class="text-lg font-bold">Nuclear Fission: Large Scale</h1>
+            <span class="text-xs bg-blue-800 px-2 py-1 rounded text-blue-200 hidden sm:inline-block">Scroll to Zoom • Drag to Pan</span>
+        </div>
+        <button onclick="exportData()" class="px-3 py-1 bg-blue-700 hover:bg-blue-600 rounded text-sm transition">
+            Download CSV
+        </button>
+    </header>
+
+    <div class="flex flex-1 relative overflow-hidden">
+        
+        <aside class="w-72 bg-white shadow-xl z-20 overflow-y-auto p-4 flex flex-col gap-5 shrink-0">
+            
+            <div class="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                <div class="flex gap-2 mb-3">
+                    <button id="btn-fire" class="flex-1 bg-red-600 hover:bg-red-500 text-white font-bold py-2 rounded shadow active:scale-95 transition">
+                        FIRE NEUTRON
+                    </button>
+                </div>
+                <button id="btn-reset" class="w-full bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold py-1 rounded transition text-sm">
+                    Reset & Respawn
+                </button>
+            </div>
+
+            <div class="space-y-4">
+                <p class="text-xs text-slate-500 italic">Drag sliders and release to spawn atoms.</p>
+                
+                <div>
+                    <div class="flex justify-between text-xs font-bold uppercase text-slate-500 mb-1">
+                        <span>U-235 (Fissile)</span>
+                        <span id="val-u235" class="bg-green-100 text-green-800 px-1 rounded">0</span>
+                    </div>
+                    <input type="range" id="slider-u235" min="0" max="500" value="0" class="w-full accent-green-600 h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer">
+                </div>
+
+                <div>
+                    <div class="flex justify-between text-xs font-bold uppercase text-slate-500 mb-1">
+                        <span>U-238 (Absorber)</span>
+                        <span id="val-u238" class="bg-yellow-100 text-yellow-800 px-1 rounded">0</span>
+                    </div>
+                    <input type="range" id="slider-u238" min="0" max="500" value="0" class="w-full accent-yellow-600 h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer">
+                </div>
+            </div>
+
+            <div class="bg-slate-800 text-blue-100 p-3 rounded-lg text-xs space-y-2 font-mono mt-auto">
+                <div class="flex justify-between border-b border-slate-700 pb-1">
+                    <span>Active Bodies:</span>
+                    <span id="stat-bodies" class="text-slate-300">0</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-red-400">Fissions:</span>
+                    <span id="stat-fissions" class="text-white font-bold text-base">0</span>
+                </div>
+                <div class="flex justify-between">
+                    <span>Neutrons:</span>
+                    <span id="stat-neutrons">0</span>
+                </div>
+                <div class="flex justify-between">
+                    <span>Energy (MeV):</span>
+                    <span id="stat-energy" class="text-yellow-400">0</span>
+                </div>
+            </div>
+        </aside>
+
+        <main class="flex-1 relative overflow-hidden bg-slate-50">
+            <div id="canvas-container" class="absolute inset-0"></div>
+
+            <div class="absolute top-4 left-4 flex flex-col gap-1 z-30">
+                <button id="btn-zoom-in" class="w-8 h-8 bg-white/90 border hover:bg-white text-slate-700 rounded shadow font-bold text-lg flex items-center justify-center transition">+</button>
+                <button id="btn-zoom-out" class="w-8 h-8 bg-white/90 border hover:bg-white text-slate-700 rounded shadow font-bold text-lg flex items-center justify-center transition">-</button>
+                <button id="btn-center" class="w-8 h-8 bg-white/90 border hover:bg-white text-slate-700 rounded shadow text-[10px] flex items-center justify-center uppercase tracking-tighter transition" title="Reset View">Fit</button>
+            </div>
+
+            <div class="monitor-panel absolute bottom-4 right-4 w-80 h-40 rounded-lg p-2 flex flex-col pointer-events-none">
+                <div class="text-[10px] font-bold text-slate-500 mb-1 flex justify-between">
+                    <span>REACTION RATE</span>
+                    <span class="opacity-50">fissions/sec</span>
+                </div>
+                <div class="flex-1 relative">
+                    <canvas id="chart-canvas"></canvas>
+                </div>
+            </div>
+
+            <div class="absolute top-4 right-4 bg-white/90 p-2 rounded border shadow-sm text-[10px] pointer-events-none select-none">
+                <div class="flex items-center gap-2 mb-1"><div class="w-2 h-2 rounded-full bg-green-500"></div> U-235</div>
+                <div class="flex items-center gap-2 mb-1"><div class="w-2 h-2 rounded-full bg-yellow-500"></div> U-238</div>
+                <div class="flex items-center gap-2"><div class="w-2 h-2 rounded-full bg-red-400"></div> Daughter</div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // --- Configuration ---
+        const CONFIG = {
+            colors: { u235: '#22c55e', u238: '#eab308', u239: '#a16207', daughter: '#f87171', neutron: '#4b5563' },
+            sizes: { nucleus: 12, neutron: 3 },
+            physics: { neutronSpeed: 12, daughterSpeed: 4 },
+            categories: { default: 1, neutron: 2, nucleus: 4 }
+        };
+
+        const state = {
+            fissionCount: 0,
+            totalEnergy: 0,
+            timeElapsed: 0,
+            dataLog: [['Time', 'Fissions', 'Energy']],
+            lastFissionCount: 0,
+            isDragging: false,
+            lastMousePos: { x: 0, y: 0 }
+        };
+
+        // --- Setup Matter.js ---
+        const Engine = Matter.Engine,
+              Render = Matter.Render,
+              Runner = Matter.Runner,
+              Bodies = Matter.Bodies,
+              Composite = Matter.Composite,
+              Events = Matter.Events,
+              Vector = Matter.Vector,
+              Body = Matter.Body,
+              Bounds = Matter.Bounds,
+              Mouse = Matter.Mouse,
+              MouseConstraint = Matter.MouseConstraint;
+
+        const engine = Engine.create();
+        engine.gravity.scale = 0; // No gravity
+
+        const container = document.getElementById('canvas-container');
+        
+        // Initialize Render with correct initial dimensions
+        const render = Render.create({
+            element: container,
+            engine: engine,
+            options: {
+                width: container.clientWidth,
+                height: container.clientHeight,
+                background: 'transparent',
+                wireframes: false,
+                hasBounds: true
+            }
+        });
+
+        // --- Camera System ---
+        let viewport = {
+            center: { x: 0, y: 0 },
+            zoom: 1.0
+        };
+
+        function updateCamera() {
+            // Ensure we are using current canvas dimensions
+            const width = render.canvas.width;
+            const height = render.canvas.height;
+
+            // Calculate View Box
+            const viewWidth = width / viewport.zoom;
+            const viewHeight = height / viewport.zoom;
+
+            const minX = viewport.center.x - viewWidth / 2;
+            const minY = viewport.center.y - viewHeight / 2;
+            
+            Render.lookAt(render, {
+                min: { x: minX, y: minY },
+                max: { x: minX + viewWidth, y: minY + viewHeight }
+            });
+            
+            // Sync mouse
+            Mouse.setScale(mouseConstraint.mouse, { x: 1/viewport.zoom, y: 1/viewport.zoom });
+            Mouse.setOffset(mouseConstraint.mouse, { x: minX, y: minY });
+        }
+
+        // --- Draw Center Marker (Visual Debug) ---
+        // This circle stays at (0,0) so you always know where the "middle" is
+        Events.on(render, 'afterRender', function() {
+            const ctx = render.context;
+            ctx.globalCompositeOperation = 'destination-over'; 
+            
+            // Draw a faint target at world 0,0
+            ctx.strokeStyle = 'rgba(0,0,0,0.1)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(0, 0, 50, 0, 2 * Math.PI);
+            ctx.moveTo(-20, 0); ctx.lineTo(20, 0);
+            ctx.moveTo(0, -20); ctx.lineTo(0, 20);
+            ctx.stroke();
+
+            ctx.globalCompositeOperation = 'source-over';
+        });
+
+        // --- Factories ---
+        function createAtom(x, y, type) {
+            return Bodies.circle(x, y, CONFIG.sizes.nucleus, {
+                label: type,
+                isStatic: true, // Nuclei stay put until hit
+                frictionAir: 0.1,
+                render: { 
+                    fillStyle: type === 'u235' ? CONFIG.colors.u235 : CONFIG.colors.u238,
+                    strokeStyle: 'rgba(0,0,0,0.3)',
+                    lineWidth: 1
+                },
+                collisionFilter: {
+                    category: CONFIG.categories.nucleus,
+                    mask: CONFIG.categories.neutron
+                }
+            });
+        }
+
+        function createNeutron(x, y, vel) {
+            const n = Bodies.circle(x, y, CONFIG.sizes.neutron, {
+                label: 'neutron',
+                restitution: 1,
+                friction: 0,
+                frictionAir: 0,
+                mass: 0.1,
+                render: { fillStyle: CONFIG.colors.neutron },
+                collisionFilter: {
+                    category: CONFIG.categories.neutron,
+                    mask: CONFIG.categories.nucleus
+                }
+            });
+            Body.setVelocity(n, vel);
+            return n;
+        }
+
+        function createDaughter(x, y) {
+            return Bodies.circle(x, y, CONFIG.sizes.nucleus * 0.6, {
+                label: 'daughter',
+                mass: 50,
+                frictionAir: 0.05,
+                render: { fillStyle: CONFIG.colors.daughter },
+                collisionFilter: { mask: 0 } // Debris doesn't collide
+            });
+        }
+
+        // --- Spawning Logic ---
+        function spawnGrid() {
+            // 1. Clear world
+            Composite.clear(engine.world, false);
+            engine.events = {}; 
+            attachCollisionEvents(); // Re-attach listeners
+
+            // 2. Get values
+            const u235Count = parseInt(document.getElementById('slider-u235').value);
+            const u238Count = parseInt(document.getElementById('slider-u238').value);
+            const totalAtoms = u235Count + u238Count;
+
+            // 3. Reset stats
+            state.fissionCount = 0;
+            state.totalEnergy = 0;
+            updateStats();
+
+            // 4. Force Reset Camera Center
+            // We always center on 0,0 when respawning so the user can see the new grid
+            viewport.center = { x: 0, y: 0 };
+
+            if (totalAtoms === 0) {
+                // Even with 0 atoms, update camera so we see the empty crosshair
+                viewport.zoom = 1;
+                updateCamera();
+                return; 
+            }
+
+            // 5. Generate Atoms (Spiral Algorithm)
+            let types = Array(u235Count).fill('u235').concat(Array(u238Count).fill('u238'));
+            types.sort(() => Math.random() - 0.5);
+
+            const atoms = [];
+            const spacing = CONFIG.sizes.nucleus * 2.5; 
+            let count = 0;
+            let layer = 0;
+            
+            while (count < totalAtoms) {
+                if (layer === 0) {
+                    atoms.push(createAtom(0, 0, types[count]));
+                    count++;
+                } else {
+                    const circum = 2 * Math.PI * (layer * spacing);
+                    const steps = Math.floor(circum / spacing); 
+                    const angleStep = (2 * Math.PI) / steps;
+
+                    for (let i = 0; i < steps; i++) {
+                        if (count >= totalAtoms) break;
+                        const angle = i * angleStep;
+                        // Organic jitter
+                        const r = layer * spacing + (Math.random()-0.5)*2;
+                        const x = r * Math.cos(angle) + (Math.random()-0.5)*2;
+                        const y = r * Math.sin(angle) + (Math.random()-0.5)*2;
+                        
+                        atoms.push(createAtom(x, y, types[count]));
+                        count++;
+                    }
+                }
+                layer++;
+            }
+
+            Composite.add(engine.world, atoms);
+            
+            // 6. Calculate Optimal Zoom
+            // We want the whole cluster to fit in the screen
+            const clusterRadius = layer * spacing + 50; // +50 padding
+            const minScreenDimension = Math.min(render.canvas.width, render.canvas.height);
+            
+            // Zoom = ScreenPixels / WorldPixels. 
+            // We want WorldPixels (clusterDiameter) to equal ScreenPixels * 0.8 (padding)
+            let optimalZoom = (minScreenDimension * 0.9) / (clusterRadius * 2);
+            
+            // Clamp zoom to reasonable levels
+            viewport.zoom = Math.min(1.5, Math.max(0.1, optimalZoom));
+            
+            updateCamera();
+        }
+
+        // --- Interaction Logic ---
+        function triggerFission(nucleus, neutron) {
+            const pos = nucleus.position;
+            Composite.remove(engine.world, [nucleus, neutron]);
+            
+            state.fissionCount++;
+            state.totalEnergy += 200;
+
+            const d1 = createDaughter(pos.x - 5, pos.y);
+            const d2 = createDaughter(pos.x + 5, pos.y);
+            
+            Body.setVelocity(d1, { x: -CONFIG.physics.daughterSpeed, y: (Math.random()-0.5) });
+            Body.setVelocity(d2, { x: CONFIG.physics.daughterSpeed, y: (Math.random()-0.5) });
+
+            Composite.add(engine.world, [d1, d2]);
+
+            // Spawn 2 or 3 Neutrons
+            const nSpawns = Math.random() > 0.5 ? 3 : 2;
+            for(let i=0; i<nSpawns; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const v = CONFIG.physics.neutronSpeed;
+                Composite.add(engine.world, createNeutron(
+                    pos.x + Math.cos(angle)*10, 
+                    pos.y + Math.sin(angle)*10, 
+                    { x: Math.cos(angle)*v, y: Math.sin(angle)*v }
+                ));
+            }
+        }
+
+        function triggerAbsorption(nucleus, neutron) {
+            Composite.remove(engine.world, neutron);
+            nucleus.label = 'u239';
+            nucleus.render.fillStyle = CONFIG.colors.u239;
+            Body.setStatic(nucleus, false);
+            Body.setVelocity(nucleus, Vector.mult(neutron.velocity, 0.15));
+            setTimeout(() => {
+                if(nucleus && nucleus.parent) {
+                    Body.setVelocity(nucleus, {x:0, y:0});
+                    nucleus.frictionAir = 0.5;
+                }
+            }, 300);
+        }
+
+        function attachCollisionEvents() {
+            Events.on(engine, 'collisionStart', evt => {
+                const pairs = evt.pairs;
+                for (let i = 0; i < pairs.length; i++) {
+                    const { bodyA, bodyB } = pairs[i];
+                    let n = null, u = null;
+                    if (bodyA.label === 'neutron') n = bodyA;
+                    else if (bodyB.label === 'neutron') n = bodyB;
+                    if (bodyA.label.startsWith('u')) u = bodyA;
+                    else if (bodyB.label.startsWith('u')) u = bodyB;
+
+                    if (n && u) {
+                        if (u.label === 'u235') triggerFission(u, n);
+                        else if (u.label === 'u238') triggerAbsorption(u, n);
+                    }
+                }
+            });
+        }
+
+        // --- Controls & Inputs ---
+        
+        // Fire Button: Shoots from the left side of the VIEWPORT
+        document.getElementById('btn-fire').addEventListener('click', () => {
+            const width = render.canvas.width;
+            const viewWidth = width / viewport.zoom;
+            // Start position: Left edge of current view + padding
+            const startX = viewport.center.x - (viewWidth / 2) + 50; 
+            const startY = viewport.center.y + (Math.random() - 0.5) * 50; // Slight y jitter
+            
+            const n = createNeutron(startX, startY, { x: CONFIG.physics.neutronSpeed, y: 0 });
+            Composite.add(engine.world, n);
+        });
+
+        document.getElementById('btn-reset').addEventListener('click', spawnGrid);
+        
+        ['slider-u235', 'slider-u238'].forEach(id => {
+            const el = document.getElementById(id);
+            const valEl = document.getElementById('val-'+id.split('-')[1]);
+            el.addEventListener('input', e => {
+                valEl.textContent = e.target.value;
+            });
+            // Only spawn when user releases mouse to save CPU
+            el.addEventListener('change', spawnGrid);
+        });
+
+        // Zoom & Pan
+        document.getElementById('btn-zoom-in').onclick = () => { viewport.zoom *= 1.2; updateCamera(); };
+        document.getElementById('btn-zoom-out').onclick = () => { viewport.zoom /= 1.2; updateCamera(); };
+        document.getElementById('btn-center').onclick = () => { 
+            viewport.center = { x: 0, y: 0 }; 
+            // Recalculate best zoom for current atoms
+            const bodies = Composite.allBodies(engine.world).filter(b => b.label.startsWith('u'));
+            if(bodies.length > 0) spawnGrid(); // lazy reset to fit
+            else { viewport.zoom = 1; updateCamera(); }
+        };
+
+        // Mouse Events
+        container.addEventListener('mousedown', e => {
+            state.isDragging = true;
+            state.lastMousePos = { x: e.clientX, y: e.clientY };
+            container.style.cursor = 'grabbing';
+        });
+        window.addEventListener('mouseup', () => {
+            state.isDragging = false;
+            container.style.cursor = 'grab';
+        });
+        window.addEventListener('mousemove', e => {
+            if (!state.isDragging) return;
+            const dx = e.clientX - state.lastMousePos.x;
+            const dy = e.clientY - state.lastMousePos.y;
+            viewport.center.x -= dx / viewport.zoom;
+            viewport.center.y -= dy / viewport.zoom;
+            state.lastMousePos = { x: e.clientX, y: e.clientY };
+            updateCamera();
+        });
+        container.addEventListener('wheel', e => {
+            e.preventDefault();
+            const factor = e.deltaY < 0 ? 1.1 : 0.9;
+            viewport.zoom *= factor;
+            viewport.zoom = Math.max(0.05, Math.min(viewport.zoom, 5));
+            updateCamera();
+        });
+
+        // --- System Loops ---
+
+        // 1. Stats & Cleanup Loop (2Hz)
+        setInterval(() => {
+            const bodies = Composite.allBodies(engine.world);
+            const cleanupDist = 5000 / viewport.zoom; 
+            const toRemove = [];
+            let counts = { active: 0, neutron: 0 };
+            
+            bodies.forEach(b => {
+                counts.active++;
+                if (b.label === 'neutron') counts.neutron++;
+                // Remove particles that flew too far away
+                if ((b.label === 'neutron' || b.label === 'daughter') && Vector.magnitude(b.position) > cleanupDist) {
+                    toRemove.push(b);
+                }
+            });
+            Composite.remove(engine.world, toRemove);
+            
+            document.getElementById('stat-bodies').textContent = counts.active;
+            document.getElementById('stat-neutrons').textContent = counts.neutron;
+            document.getElementById('stat-fissions').textContent = state.fissionCount;
+            document.getElementById('stat-energy').textContent = state.totalEnergy;
+        }, 500);
+
+        // 2. Chart Loop (1Hz)
+        const ctxChart = document.getElementById('chart-canvas').getContext('2d');
+        const chart = new Chart(ctxChart, {
+            type: 'line',
+            data: { labels: [], datasets: [{ label: 'Rate', data: [], borderColor: 'rgb(239, 68, 68)', borderWidth: 1, pointRadius: 0 }] },
+            options: { 
+                responsive: true, maintainAspectRatio: false, animation: false,
+                scales: { x: { display: false }, y: { display: true } },
+                plugins: { legend: { display: false } }
+            }
+        });
+
+        setInterval(() => {
+            const rate = state.fissionCount - state.lastFissionCount;
+            state.lastFissionCount = state.fissionCount;
+            chart.data.labels.push('');
+            chart.data.datasets[0].data.push(rate);
+            if(chart.data.labels.length > 30) {
+                chart.data.labels.shift();
+                chart.data.datasets[0].data.shift();
+            }
+            chart.update();
+            state.timeElapsed++;
+            state.dataLog.push([state.timeElapsed, state.fissionCount, state.totalEnergy]);
+        }, 1000);
+
+        function updateStats() {
+            document.getElementById('stat-fissions').textContent = state.fissionCount;
+            document.getElementById('stat-energy').textContent = state.totalEnergy;
+        }
+
+        window.exportData = function() {
+            let csv = "data:text/csv;charset=utf-8," + state.dataLog.map(e => e.join(",")).join("\n");
+            let link = document.createElement("a");
+            link.href = encodeURI(csv);
+            link.download = "nuclear_data.csv";
+            document.body.appendChild(link);
+            link.click();
+        }
+
+        // --- Init ---
+        // Mouse Constraints for physics engine
+        const mouse = Mouse.create(render.canvas);
+        const mouseConstraint = MouseConstraint.create(engine, {
+            mouse: mouse,
+            constraint: { stiffness: 0.2, render: { visible: false } }
+        });
+        Composite.add(engine.world, mouseConstraint);
+        render.mouse = mouse;
+
+        // Resize Handler
+        window.addEventListener('resize', () => {
+            render.canvas.width = container.clientWidth;
+            render.canvas.height = container.clientHeight;
+            updateCamera();
+        });
+
+        // Start
+        Runner.run(Runner.create(), engine);
+        Render.run(render);
+        
+        // Initial setup
+        render.canvas.width = container.clientWidth;
+        render.canvas.height = container.clientHeight;
+        spawnGrid(); // Will spawn 0 atoms but set camera correctly
+    </script>
+</body>
+</html>
